@@ -1,0 +1,193 @@
+---
+title: "assignment_1_radcliffe"
+author: "Don Radcliffe"
+date: "1/12/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+## using here() package for working directory transferability between machines/collaborators
+require(here)
+require(dplyr)
+require(magrittr)
+```
+
+# Question 1
+
+In this chunk I've loaded in data, and displayed the dimensionality and class.  Both datasets were read in as dataframes, and the dimensions match those specified in the assignment. 
+
+*Challenge questions*: I could use dim() to get the dimensions and class() to get the class.  I also use the summary() and View() function to explore data, and heavily rely on graphing using ggplot() to both check data quality and learn about the data. 
+```{r question one}
+## set common working directory
+import_dir_assignment_1 <- here::here('data')
+
+## read data
+oak_data <- read.csv(file.path(import_dir_assignment_1, 'Oak_data_47x216.csv'), stringsAsFactors = TRUE)
+oak_species <- read.csv(file.path(import_dir_assignment_1, 'Oak_species_189x5.csv'), stringsAsFactors = TRUE)
+
+## display structure and dimensionality, using str() function to check both in one call. 
+str(oak_data)
+str(oak_species)
+```
+
+# Question 2
+
+In this section I've displayed the purpose of the functions assigned.  Select() subsets specified columns. Arrange() puts rows in order by their values in one or more columns.  Filter() subsets rows that match specified criteria. Mutate() changes entire columns, and can also create or delete them.
+```{r select}
+## select: create a dataframe with only columns relating to b horizon properties, and stand.
+b_horizon <- oak_data %>% 
+  select(c(X, BHoriz, B1Horiz, B2Horiz, B3Horiz))
+head(b_horizon, 3)
+```
+
+```{r arrange}
+## arrange: order the b_horizon dataframe by b horizon depth
+b_horizon_arranged <- b_horizon %>%
+  arrange(BHoriz) 
+head(b_horizon_arranged, 3)
+```
+
+```{r filter}
+## filter: choose all stands with b horizon depths > 100
+b_horizon_100 <- b_horizon_arranged %>%
+  filter(BHoriz > 100)
+head(b_horizon_100, 3)
+```
+
+```{r mutate}
+## mutate: make a column to manually check that BHoriz was entered correctly by adding the other three columns
+b_horizon_100_manual <- b_horizon_100 %>%
+  mutate(BHorizManual = B1Horiz + B2Horiz + B3Horiz)
+head(b_horizon_100_manual, 3)
+```
+
+```{r group_by, summarize}
+## group_by and summarize: group the oak data by aspect class and then use summarize to get the mean of the b horizon.
+aspect_class <- oak_data %>%
+  group_by(AspClass) %>%
+  summarize(mean_b_horizon = round(mean(BHoriz), 0)) %>%
+  print()
+```
+
+# Question 3
+
+The drainage class of stand 21 is 'Good':
+```{r Stand 21}
+stand_21_drainage <- oak_data %>%
+  select(X, DrainageClass) %>%
+  filter(X == 'Stand21') %>%
+  print()
+```
+
+Assuming all trees are Garry oaks(??), stand 5 has the tallest tree height, at 24.4 meters.
+```{r tall garry oaks}
+tall_garry_oaks <- oak_data %>%
+  select(X, TreeHt.m) %>%
+  arrange(desc(TreeHt.m)) 
+head(tall_garry_oaks, 3)
+```
+
+Well drained is the most common drainage class.
+```{r drainage class}
+drainage_class <- oak_data %>%
+  select(X, DrainageClass) %>%
+  mutate(number_of_stands = 1) %>%
+  aggregate(number_of_stands ~ DrainageClass, data = ., FUN = sum) %>%
+  print()
+```
+
+There are 38 stands north of corvallis, and 9 south of corvallis. 
+```{r Corvallis}
+north_of_corvallis <- oak_data %>%
+  select(X, LatAppx) %>%
+  filter(LatAppx > 44.5667) %>%
+  nrow()
+north_of_corvallis
+
+south_of_corvallis <- oak_data %>%
+  select(X, LatAppx) %>%
+  filter(LatAppx < 44.5667) %>%
+  nrow()
+south_of_corvallis
+```
+
+Didn't run a significance test, but it appears at first glance that logged stands have greater species richness.
+```{r logged}
+logged <- oak_data %>%
+  select(X, NotLogged, SppRich) %>%
+  group_by(NotLogged) %>%
+  summarize(mean_species_richness = mean(SppRich)) %>%
+  print()
+```
+
+There are about 5.7 species of graminoids per plot. 
+```{r graminoids}
+## tidyr for pivot_longer
+require(tidyr)
+
+lifeform <- oak_species %>%
+  select(SpeciesCode, GrowthForm) %>%
+  rename('species' = SpeciesCode)
+
+graminoids_per_plot <- oak_data %>%
+  select(X, Abgr.s:Zice) %>%
+  pivot_longer(Abgr.s:Zice, names_to = 'species', values_to = 'cover') %>%
+  mutate(present = case_when(cover > 0 ~ 1, 
+                             cover == 0 ~ 0)) %>%
+  full_join(lifeform, by = 'species') %>%
+  filter(GrowthForm == 'Graminoid') %>%
+  aggregate(present ~ X, data = ., FUN = sum) %>%
+  rename('number_of_graminoids' = present)
+str(graminoids_per_plot)
+
+mean(graminoids_per_plot$number_of_graminoids)
+```
+
+*Challenge question*: you've seen most of my tricks here, I tend to stick with dplyr.
+
+# Question 4
+
+A horizon and species richness look unrelated by both r squared and p value. Sidenote: I did all the relativizations for the questions below in this chunk, for simplicity. 
+```{r raw depth}
+graminoid_soil <- oak_data %>%
+  select(X, AHoriz, BHoriz) %>%
+  mutate(a_horizon_relativized_by_max = AHoriz/max(AHoriz)) %>%
+  mutate(b_horizon_relativized_by_max = BHoriz/max(BHoriz)) %>%
+  full_join(graminoids_per_plot, by = 'X') %>%
+  mutate(graminoids_relativized_by_max = number_of_graminoids/max(number_of_graminoids))
+
+summary(lm(number_of_graminoids ~ AHoriz, data = graminoid_soil))
+```
+
+Before running the relativized analysis: based on a graphical look at the data and a summary call, I believe most data points are well below the maximum (right skewed distribution), and therefore the relativization will affect the conclusion by overestimating the contribution of many data points.  Then I checked the CV, which puts us in McCune & Grace's 'moderate' effects range:
+
+```{r cv}
+CV <- function(x) { 100 * sd(x) / mean(x) }
+CV(x = oak_data$BHoriz)
+```
+
+After running the relativized analysis: the estimated effect size and standard error increased with relativization, while p value and r squared remained exactly the same.  I did not quite expect this, but it's in line with my a priori hypothesis of overestimation. 
+```{r relativized by maximum value}
+summary(lm(number_of_graminoids ~ a_horizon_relativized_by_max, data = graminoid_soil))
+```
+
+I can't think of a compelling reason to relative the b horizon differently than a horizon, it would seem like a bad idea to do so.  Therefore, I'm relativizing b horizon by maximum as well.  If the shape of the distribution of the raw b horizon depths was very different from the shape of the distribtion of a horizon depths, the outcome could be distorted by relativizing. 
+
+Now the question has turned into a multiple regression problem, where we use multiple predictor variables to predict an outcome.  I'm choosing not to use an interaction effect. 
+
+Predicting graminoids with a and b horizon increased the r squared values by quite a bit, although they still aren't high in the multiple regression model.  The p value for the a horizon is a bit smaller when the information for the b horizon was included. 
+```{r multiple regression}
+summary(lm(number_of_graminoids ~ a_horizon_relativized_by_max + b_horizon_relativized_by_max, data = graminoid_soil))
+```
+
+*Bonus Question*
+Relativizing species richness decreased the estimated effect size and standard error of the a horizon effect, relative to no relativization.  
+```{r species richness relativization}
+summary(lm(graminoids_relativized_by_max ~ AHoriz, data = graminoid_soil))
+```
+
+Relativizing both species richness and a horizon increased the estimated effect size of standard error of the a horizon effect, relative to no relativization. In no relativization combination of these two variables did the p-value or the r squared estimate change. 
+```{r double relativization}
+summary(lm(graminoids_relativized_by_max ~ a_horizon_relativized_by_max, data = graminoid_soil))
+```
