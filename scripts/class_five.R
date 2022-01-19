@@ -13,7 +13,18 @@ geog.st <- decostand(x = geog, method = "range")
 geog.dis <- vegdist(x = geog.st, method="euc") 
 
 geog.dis <- Oak %>%
+  mutate(LongAppx = case_when(
+    SoilSeriesName == 'Olympia' ~ LongAppx * 100,
+    TRUE  ~ LongAppx)) %>%
+  #decostand(method = 'range') %>%
   dplyr::select(LatAppx, LongAppx) %>%
-  ## decostand is a relativization function
-  decostand(method = 'range') %>%
-  vegdist(method = 'euclidean')
+  vegdist(method = 'euclidean') %>%
+  disana()
+
+spp.dis <- Oak_abund %>%
+  decostand(method = 'max') %>%
+  vegdist(method = 'bray')
+spp.dis
+
+require(labdsv)
+disana(spp.dis)
