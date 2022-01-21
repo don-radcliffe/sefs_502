@@ -1,13 +1,13 @@
 ## Script to load and conduct initial adjustments to oak plant community dataset
 ## JD Bakker
-## 210114
+## 220119
 
 # Assumes that you have opened the R project that is saved in your SEFS 502 folder.
 
 # Load packages
 require(vegan)
 require(labdsv)
-require(magrittr)
+require(tidyverse)
 
 # Load data
 Oak <- read.csv("data/Oak_data_47x216.csv", header = TRUE, row.names = 1) 

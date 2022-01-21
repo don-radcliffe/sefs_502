@@ -10,3 +10,5 @@ test <- read.table("data/Legendre.Legendre.2012.p311.txt",
   
 dist(test)
 dist(test, method = 'manhattan')
+
+vegan::vegdist()
