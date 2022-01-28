@@ -24,3 +24,33 @@ ggsave("graphics/perm1.png",
 ## you can run a script from another script using the source function
 ## this runs the load.oak.data script
 source('scripts/load.oak.data.R')
+str(Oak)
+
+Resp.dist <- perm.eg %>%
+  dplyr::select(Resp1, Resp2) %>%
+  dist()
+Resp.dist %>% round(3)
+
+anosim(x, grouping, permutations = 999,
+       distance = "bray", strata = NULL,
+       parallel = getOption("mc.cores"))
+
+
+
+grazing.results.anosim <- anosim(x = Oak1.dist,
+                                 grouping = grazing, permutations = 999)
+grazing.results.anosim
+
+R.values <- with(grazing.results.anosim,
+                 data.frame(R = c(statistic, perm) ) )
+R.values$Type <- c("actual", rep("perm", length(R.values$R) -1))
+
+
+ggplot(data = R.values, aes(x = R)) +
+  geom_density() +
+  geom_vline(data = R.values[R.values$Type == "actual" , ],
+             aes(xintercept = R), colour = "red") +
+  theme_bw()
+ggsave("graphics/ANOSIM.R.png",
+       width = 3, height = 2.5,
+       units = "in", dpi = 300)
