@@ -1,0 +1,6 @@
+	Sample1	Sample2	Sample3	Sample4	Sample5
+Sample1	0	26	32	42	56
+Sample2	26	0	14	56	54
+Sample3	32	14	0	50	36
+Sample4	42	56	50	0	10
+Sample5	56	54	36	10	0
