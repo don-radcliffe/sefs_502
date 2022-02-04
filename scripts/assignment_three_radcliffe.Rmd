@@ -1,7 +1,7 @@
 ---
 title: "assignment_three_radcliffe"
 author: "Don Radcliffe"
-date: "2/3/2022"
+date: "2/1/2022"
 output: pdf_document
 ---
 
@@ -11,13 +11,18 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # 1
 
-**1a**, read in data:
+**1a)**, read in data:
 ```{r libraries, set wd, load data, message = FALSE}
 require(dplyr)
 require(tidyr)
 require(stringr)
+require(tibble)
 require(janitor)
+
 require(here)
+
+require(vegan)
+require(labdsv)
 
 oak_raw <- read.csv(here('data/Oak_data_47x216.csv'), stringsAsFactors = TRUE) %>%
   rename('stand' = X)
@@ -25,59 +30,41 @@ oak_raw <- read.csv(here('data/Oak_data_47x216.csv'), stringsAsFactors = TRUE) %
 head(oak_raw[,1:5])
 ```
 
-**1b**, subset to 70-90% of plots.  Doing so based on DrainageClass:
+**1b)**, I'm subsetting based on DrainageClass, to get stands with good- or well-drained soils only.
 ```{r subset}
 oak_subset <- oak_raw %>%
-  filter(DrainageClass == 'Good' | DrainageClass == 'Well')
+  filter(DrainageClass == 'Good' | DrainageClass == 'Well') %>%
+  column_to_rownames(var = 'stand')
 head(oak_subset[,1:5])
 ```
 
-**1c**, I subset species to those present in greater than 5% of the plots, because this is one common method of reducing the influence of rare species on community level statistics. I did this manually before seeing in the notes that the vegtab() function would do this for me, woops!  But, figuring out how to do it manually was also an instructive process:
+**1c**, I subset species to those present in greater than 5% of the plots, because this is one common method of reducing the influence of rare species on community level statistics. 
 ```{r subset species}
-oak_species_subset <- oak_subset %>%
-  ## Select just the species columns
-  select(c(Abgr.s:Zice)) %>%
-  ## Turn it into presence absence data
-  mutate_all(function(x) {
-    case_when(
-      x > 0 ~ 1,
-      x == 0 ~ 0)
-  }
-  )
-
-## colsums to add up how many plots each species is present in.
-## can't seem to do this in dataframe format without breaking the pipe:
-oak_species_less_than_five_percent <- data.frame(colSums(oak_species_subset)) %>%
-  ## Filter to those species present in 2 plots or less, the 5% threshold is between 2 and 3. 
-  filter(colSums.oak_species_subset. < 3) %>%
-  ## Make it a vector of the row names, which are the species in less than 5% of plots
-  row.names()
-
-## Now select those rownames out of our oak_subset data, 
-## to get our final dataframe ready for analysis
-oak1 <- select(oak_subset, -oak_species_less_than_five_percent)
-## Let's give it a more wieldly name, I d
-
+oak_subset_species <- oak_subset %>%
+  select(Abgr.s:Zice) %>%
+  vegtab(minval = 0.05 * nrow(oak_subset)) %>%
+  rownames_to_column(var = 'stand')
 ## We can use the str() calls below to show that we've cut the data down,
-## from 217 variables to 123 variables, by removing speices in less than 5% of plots
-#str(oak1)
+## from 217 variables to 126 variables, by removing species in less than 5% of plots (and the response variables)
+#str(oak_subset_species)
 #str(oak_subset)
 ```
 
-**1d**, I would like to test the effects of logging (cat.) and head load (cont.), two considerations I've been interested in my current and past research. 
+**1d)**, I would like to test the effects of logging (cat.) and head load (cont.), two considerations I've been interested in my current and past research. 
 
-I expect that species richness is greater on sites with a history of logging, because it let light through to the understory in gaps and therefore facilitates a wider range of understory species.
+I expect that community composition will be different between historically logged and unlogged sites, because logging lets light through to the understory in gaps and therefore facilitates a wider range of understory species, and often richer communities. 
 
-I expect that species richness is greater on sites with less heat loading, because oaks grow on dry sites to begin with, and I've filtered to high levels of soil drainage, so that the driest sites (with the highest heat loads) may be too dry for many species.  It's also possible that species richness is greater on sites with more heat loading because there tends to be more open canopy space at drier sites. 
+I expect that community composition will be differ by heat load heat load, because oak forests are often in relatively dry sites, dry site plant species/communities are often determined by moisture, and heat load has a major effect of evaporative pressure, and therefore moisture dynamics. 
 
-I expect that species richness will be greatest with the interaction of logging with low heat loading, because of the combination of opening canopy space with relatively more moisture that may be tolerable for more species. 
+I expect that the interaction effect of logging and heat load will be an important determinate of plant community composition, because of the interaction of moisture and light limitation; for example, communities and some species may be more limited in their ability to respond to canopy opening on dry sites where moisture is more limiting than light. 
 
 To facilitate my analyses, I've formatted my data to be as simple and intuitive as possible, and be in a format that I use in my own work.
 ```{r format oak dataset into Don friendly version}
-## Don friendly data formatting:
-oak <- oak1 %>%
-  ## Subset to only the data I will use.
-  select(stand, NotLogged, HeatLoad, Abgr.t:Vinu) %>%
+## A table so we can rejoin to explanatory variables of interest
+oak <- oak_subset %>% 
+  select(NotLogged, HeatLoad) %>%
+  rownames_to_column(var = 'stand') %>%
+  full_join(oak_subset_species, by = 'stand') %>%
   ## Get the capital letters out of the stand column's values
   mutate(stand = tolower(stand),
          .keep = 'unused',
@@ -88,16 +75,17 @@ oak <- oak1 %>%
     NotLogged == 'No' ~ 'logged'),
     .keep = 'unused',
     .after = stand) %>%
+  mutate(logged = as.factor(logged)) %>%
   ## Round the heat load and change the name
   mutate(heat_load = round(HeatLoad, 3),
          .keep = 'unused',
          .after = logged) %>%
   ## I'm a snake case guy and would rather deal with species names that way (lowercase with underscores)
   janitor::clean_names(case = 'snake') 
-str(oak)
+head(oak[,1:5])
 ```
 
-**1e**, I've already applied some adjustments: subsetting by soil drainage and species presence, as well as my extra formatting
+**1e)**, I've already applied some adjustments: subsetting by soil drainage and species presence, as well as my extra formatting
 
 I've also decided to remove woody species (those ending in _s or _t).  I've done this for several reasons: the coverage values for the woody species in both tree and shrub layer tend to be *a lot* higher than those of herbaceous species, the tree layer was measured in different units, and I was thinking of understory plants when I formulated my hypotheses.
 
@@ -108,7 +96,7 @@ Below I've checked for empty stands, and looked at the distribution of our categ
 ## Remove trees and shrubs
 oak_herb <- oak %>%
   select(-ends_with('_s'), - ends_with('_t'))
-  ## we're down to 58 species now.
+  ## we're down to 82 species now.
 str(oak_herb)
 ```
 
@@ -122,10 +110,108 @@ oak_empty <- oak_herb %>%
 oak_empty
 ```
 
+Check the distribution of the heat load data: decidedly not normal, but not transforming because we are running non-parametric permutation tests for this assignment. 
 ```{r heat load}
 hist(oak_herb$heat_load, main = 'heat_load_distribution', breaks = 10)
 ```
 
-**1f**: I will choose to use the Bray-Curtis distance, because I am interested in preserving the information on abundance of species, rather than just presence-absence, and because the notes argue that Bray-Curtis distance works best for community data. In our case the 'abundance' data of herbaceous species as labeled in the metadata appear to be percent coverage and not actually abundance, and I am unsure of whether this is 100% okay to use with Bray-Curtis.
+Check the distribution of the logged data: more logged stands than unlogged.
+```{r logged}
+plot(oak_herb$logged, main = 'logged_distribution')
+```
+
+**1f)** I will choose to use the Bray-Curtis distance, because I am interested in preserving the information on abundance of species, rather than just presence-absence, and because the notes argue that Bray-Curtis distance works best for community data. In our case the 'abundance' data of herbaceous species as labeled in the metadata appear to be percent coverage and not actually abundance, and I am unsure of whether this is 100% okay to use with Bray-Curtis but moving ahead.
 
 # 2 
+
+**2a)** The simple models support my hypothesis that both logging and heat load index are important drivers of plant community composition. 
+```{r adonis2 logged}
+## create separate dataframe for each explanatory variable and for the response variables.
+logged <- oak_herb %>%
+  select(stand, logged) %>%
+  column_to_rownames(var = 'stand')
+
+heat_load <- oak_herb %>%
+  select(stand, heat_load) %>%
+  column_to_rownames(var = 'stand')
+
+species_coverage <- oak_herb %>%
+  select(stand, gal:erla) %>%
+  column_to_rownames(var = 'stand')
+
+adonis_logged <- adonis2(formula = species_coverage ~ logged, 
+                         data = oak_herb, method = 'bray')
+adonis_logged
+```
+
+```{r adonis2 heat load}
+
+adonis_heat_load <- adonis2(formula = species_coverage ~ heat_load,
+                            data = oak_herb, method = 'bray')
+adonis_heat_load
+```
+
+**2b)** I've decided to include an interaction term, because as I stated in my hypothesis I believe there will be an interaction of light availability and moisture dynamics for some plant species/communities. 
+```{r adonis2 combined}
+adonis_combined <- adonis2(formula = species_coverage ~ logged + heat_load + logged:heat_load,
+                           data = oak_herb, method = 'bray')
+adonis_combined
+```
+
+**2c)** I've reordered the individual terms, but left the interaction term at the end for both models. 
+```{r adonis2 remixed}
+adonis_remixed <- adonis2(formula = species_coverage ~ heat_load + logged + logged:heat_load,
+                          data = oak_herb, method = 'bray')
+adonis_remixed
+```
+
+**2d)** For both logged and heat_load, more variance in species composition was explained by that variable when it was put first in the model, and the effect can be seen in the sum of squares, r squared, and p value estimates.  This tells me that some variance could be explained by either logging or heat load index.
+
+However, the conclusions aren't likely to be affected, all terms were comfortably statistically significant in all models, if judged with a classical p-value threshold of 0.05.  
+
+**2e)** Changing to type III sums of squares changed my possible conclusions drastically, because I only got an estimate for my interaction effect!  I'm assuming this means that it is possible to explain all variance with the interaction effect, which makes sense because it includes both variables.  When I took the interaction effect out of the type III sums of squares model, I got estimates for both heat load and logging.  This changed the conclusion by making logging insignificant, at least with a p-value threshold of 0.05.  It also more than doubled the p value for heat load, although it was still fairly low. 
+
+Adonis2() also gave me the option to run with by = NULL, which assesses the significance of all the terms together.  It comes out at 0.001, which is the lowest possible p value with 999 iterations.  I don't find this 'all terms together' result very interesting though. 
+```{r type 1 ss}
+## same model as already run in default, running again to put them all together with all options manually chosen
+adonis_type_1 <- adonis2(formula = species_coverage ~ heat_load + logged + logged:heat_load,
+                          data = oak_herb, method = 'bray', by = 'terms')
+adonis_type_1
+```
+
+```{r type 3 ss}
+## same model as already run in default, running again to put them all together with all options manually chosen
+adonis_type_3 <- adonis2(formula = species_coverage ~ heat_load + logged + logged:heat_load,
+                          data = oak_herb, method = 'bray', by = 'margin')
+adonis_type_3
+```
+
+```{r type 2 ss without interactoin}
+adonis_type_3_ni <- adonis2(formula = species_coverage ~ heat_load + logged,
+                          data = oak_herb, method = 'bray', by = 'margin')
+adonis_type_3_ni
+```
+
+```{r type null}
+adonis_type_null <- adonis2(formula = species_coverage ~ heat_load + logged,
+                          data = oak_herb, method = 'bray', by = NULL)
+adonis_type_null
+```
+
+**2f)** I'm going to just compare p-values to keep it simple.  Below I made a dataframe of the results for easy visualization. 
+
+The more complex models had lower p-values for the same variable as the simple model when that variable was the first term in the model, but higher p-values when that variable was the second term in the model.  The higher p-values when the variable was the second term are easier to explain: they're likely due to shared variance between disproportionately attributed to the first term.   The lower p-values in the more complex model may reflect lower residuals in the model when additional terms help improve the fit.  It's also possible that some of these patterns occured due to random chance with the permutations, particularly with heat_load which has pretty small p-values/pretty high significance. 
+
+I was surprised the interaction term wasn't identical between the two complex models with different ordered terms.  I'm wondering if this is due to random chance of permutations?
+
+The type three sums of squares gave more conservative p value estimates, as the notes advertised, when the interaction factor was excluded from the model.  This was particurly evident for the logging term, and would likely change the interpretation of the results.
+
+What I learned from comparing these models was a reiteration of the sensitivity of statistical tests to all the decisions we make about implementing them.  I'm not super alarmed, however, because the absolute magnitude of the differences doesn't seem catastrophically large.  This is especially true if the researcher is evaluating p values as continuous and therefore avoiding the threshold effect around 0.05, and if the researcher is looking at a more holistic set of metrics than p-values alone. 
+```{r model results table}
+model_p_values <- data.frame(
+  'model' = c('simple_logging', 'simple_heat', 'logging_heat', 'heat_logging', 'type_three'),
+  'logging' = c(0.035, NA, 0.028, 0.038, 0.058),
+  'heat' = c(NA, 0.003, 0.007, 0.001, 0.008),
+  'interaction' = c(NA, NA, 0.027, 0.030, NA))
+model_p_values
+```
