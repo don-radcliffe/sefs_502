@@ -2,29 +2,130 @@
 title: "assignment_three_radcliffe"
 author: "Don Radcliffe"
 date: "2/3/2022"
-output: html_document
+output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
+# 1
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+**1a**, read in data:
+```{r libraries, set wd, load data, message = FALSE}
+require(dplyr)
+require(tidyr)
+require(stringr)
+require(janitor)
+require(here)
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+oak_raw <- read.csv(here('data/Oak_data_47x216.csv'), stringsAsFactors = TRUE) %>%
+  rename('stand' = X)
+## Just a few rows and columns to prove it's read in:
+head(oak_raw[,1:5])
 ```
 
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+**1b**, subset to 70-90% of plots.  Doing so based on DrainageClass:
+```{r subset}
+oak_subset <- oak_raw %>%
+  filter(DrainageClass == 'Good' | DrainageClass == 'Well')
+head(oak_subset[,1:5])
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+**1c**, I subset species to those present in greater than 5% of the plots, because this is one common method of reducing the influence of rare species on community level statistics. I did this manually before seeing in the notes that the vegtab() function would do this for me, woops!  But, figuring out how to do it manually was also an instructive process:
+```{r subset species}
+oak_species_subset <- oak_subset %>%
+  ## Select just the species columns
+  select(c(Abgr.s:Zice)) %>%
+  ## Turn it into presence absence data
+  mutate_all(function(x) {
+    case_when(
+      x > 0 ~ 1,
+      x == 0 ~ 0)
+  }
+  )
+
+## colsums to add up how many plots each species is present in.
+## can't seem to do this in dataframe format without breaking the pipe:
+oak_species_less_than_five_percent <- data.frame(colSums(oak_species_subset)) %>%
+  ## Filter to those species present in 2 plots or less, the 5% threshold is between 2 and 3. 
+  filter(colSums.oak_species_subset. < 3) %>%
+  ## Make it a vector of the row names, which are the species in less than 5% of plots
+  row.names()
+
+## Now select those rownames out of our oak_subset data, 
+## to get our final dataframe ready for analysis
+oak1 <- select(oak_subset, -oak_species_less_than_five_percent)
+## Let's give it a more wieldly name, I d
+
+## We can use the str() calls below to show that we've cut the data down,
+## from 217 variables to 123 variables, by removing speices in less than 5% of plots
+#str(oak1)
+#str(oak_subset)
+```
+
+**1d**, I would like to test the effects of logging (cat.) and head load (cont.), two considerations I've been interested in my current and past research. 
+
+I expect that species richness is greater on sites with a history of logging, because it let light through to the understory in gaps and therefore facilitates a wider range of understory species.
+
+I expect that species richness is greater on sites with less heat loading, because oaks grow on dry sites to begin with, and I've filtered to high levels of soil drainage, so that the driest sites (with the highest heat loads) may be too dry for many species.  It's also possible that species richness is greater on sites with more heat loading because there tends to be more open canopy space at drier sites. 
+
+I expect that species richness will be greatest with the interaction of logging with low heat loading, because of the combination of opening canopy space with relatively more moisture that may be tolerable for more species. 
+
+To facilitate my analyses, I've formatted my data to be as simple and intuitive as possible, and be in a format that I use in my own work.
+```{r format oak dataset into Don friendly version}
+## Don friendly data formatting:
+oak <- oak1 %>%
+  ## Subset to only the data I will use.
+  select(stand, NotLogged, HeatLoad, Abgr.t:Vinu) %>%
+  ## Get the capital letters out of the stand column's values
+  mutate(stand = tolower(stand),
+         .keep = 'unused',
+         .before = NotLogged) %>%
+  ## Make logging category easier to interpret
+  mutate(logged = case_when(
+    NotLogged == 'Yes' ~ 'not_logged',
+    NotLogged == 'No' ~ 'logged'),
+    .keep = 'unused',
+    .after = stand) %>%
+  ## Round the heat load and change the name
+  mutate(heat_load = round(HeatLoad, 3),
+         .keep = 'unused',
+         .after = logged) %>%
+  ## I'm a snake case guy and would rather deal with species names that way (lowercase with underscores)
+  janitor::clean_names(case = 'snake') 
+str(oak)
+```
+
+**1e**, I've already applied some adjustments: subsetting by soil drainage and species presence, as well as my extra formatting
+
+I've also decided to remove woody species (those ending in _s or _t).  I've done this for several reasons: the coverage values for the woody species in both tree and shrub layer tend to be *a lot* higher than those of herbaceous species, the tree layer was measured in different units, and I was thinking of understory plants when I formulated my hypotheses.
+
+I didn't want to have to relativize because of different units.  I am usually not a fan of relativizing data, because I believe the absolute values of attributes like coverage, density, basal area, etc., contain more interpretable and ecologically useful information than relativized data.  
+
+Below I've checked for empty stands, and looked at the distribution of our categorical variable, the heat load index. 
+```{r reomve trees and shrubs}
+## Remove trees and shrubs
+oak_herb <- oak %>%
+  select(-ends_with('_s'), - ends_with('_t'))
+  ## we're down to 58 species now.
+str(oak_herb)
+```
+
+Check for empty stands: there are none!
+```{r empty check}
+oak_empty <- oak_herb %>%
+  ## Take out categorical variables
+  select(-stand, -heat_load, -logged) %>%
+  ## Add across rows to get total coverage of selected species
+  rowSums()
+oak_empty
+```
+
+```{r heat load}
+hist(oak_herb$heat_load, main = 'heat_load_distribution', breaks = 10)
+```
+
+**1f**: I will choose to use the Bray-Curtis distance, because I am interested in preserving the information on abundance of species, rather than just presence-absence, and because the notes argue that Bray-Curtis distance works best for community data. In our case the 'abundance' data of herbaceous species as labeled in the metadata appear to be percent coverage and not actually abundance, and I am unsure of whether this is 100% okay to use with Bray-Curtis.
+
+# 2 
