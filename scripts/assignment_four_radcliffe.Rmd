@@ -1,0 +1,245 @@
+---
+title: "assignment_four_radcliffe"
+author: "Don Radcliffe"
+date: "3/7/2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#1
+```{r libraries and load data}
+require(ggplot2)
+require(ggordiplots)
+require(snakecase)
+require(dendextend)
+require(viridis)
+
+require(vegan)
+require(labdsv)
+
+require(tibble)
+require(tidyr)
+require(stringr)
+require(dplyr)
+
+require(here)
+
+oak_raw <- read.csv(here('data/Oak_data_47x216.csv'), stringsAsFactors = TRUE) %>%
+  rename('stand' = X)
+## Just a few rows and columns to prove it's read in:
+head(oak_raw[,1:5])
+```
+
+Subsetting out the draw and valley bottom landforms to focus on the ridge and slope landforms.
+```{r subset}
+oak_subset <- oak_raw %>%
+  filter(Landform == 'Ridge' | Landform == 'Slope') %>%
+  column_to_rownames(var = 'stand')
+head(oak_subset[,1:5])
+```
+
+Necessary adjustments: selecting only the response variables for running the analyses, with stands as the rownames. Subsetting out rare species, to reduce potential for spurious noise caused by species that don't have a major influence on other species, with the commonly used 5% threshold.  Relativizing species by maximum, in order to account for having trees, shrubs, and herbs in the same dataset, with different scales of measurement (different than my choice in assignment three).
+```{r subset species}
+oak_subset_species <- oak_subset %>%
+  select(Abgr.s:Zice) %>%
+  vegtab(minval = 0.05 * nrow(oak_subset)) %>%
+  decostand(method = 'max') %>%
+  mutate(across(where(is.numeric), round, 3))
+head(oak_subset_species[,1:5])
+```
+
+Creating a bray-curtis distance matrix because we have compositional data and this is to my knowledge the most commonly used distance measure with compositional data. 
+```{r dist}
+oak_dist <- vegdist(oak_subset_species, method = 'bray')
+str(oak_dist)
+```
+
+#2
+
+I'm using Ward's linkage because the notes/Singh et al. 2011/McCune & Grace (2002) recommend it.  In this context, I'm trying complete linkage as a 'non-recommended' method, just to see how the result may differ, and because both methods seem to me like they should result in relatively evenly dispersed groups. 
+
+```{r cluster analysis}
+#Linkage 1: Wards minimum variance method 
+hclust_ward <- hclust(oak_dist, method = "ward.D2")
+plot(hclust_ward, main ="ward's linkage")
+
+#Linkage 2: Group average 
+hclust_complete <- hclust(oak_dist, method = "complete")
+plot(hclust_complete, main = 'complete linkage')
+```
+
+These methods are both agglomerative: they start with each stand as a separate group and merge groups together.  Both methods are hierarchical: they proceed in a series of discrete iterative steps, as opposed to simultaneously.  Both methods are polythetic: all variables are used by the clustering algorithm, via the distance matrix. 
+
+Ward's method seeks to minimize variance within and between groups.  It calculates centroids and the sum of squares of the variance from the centroids for each hypothetical grouping, and then chooses the goruping that results in the least variance.  According to the notes, it is not supposed to be used with Bray-Curtis distance, which is what I used, so I'm interested to see how it compares with complete linkage.
+
+Complete linkage joins groups based on the distance between the furthest sample units within each group.  Therefore, it will favor joining smaller groups, starting with pairings of single sample units. 
+
+```{r choose number of groups}
+scree <- function(hclust_object, max.size = 12) {
+  temp <- with(hclust_object, cbind(height, merge))
+  colnames(temp) <- c("Height", "JoinsThis", "WithThis")
+  plot(x = max.size:1, 
+       y = temp[(nrow(temp)-(max.size-1)):nrow(temp), 1],
+       xlab = "Number of groups", ylab = "Height", main = hclust_object$call, type = "b")
+  tail(temp, max.size)
+}
+
+par(mfrow = c(1,2))
+
+scree(hclust_ward)
+scree(hclust_complete)
+```
+
+Seven groups appears to be optimal for Ward's linkage, while eight is better for complete linkage.  This is based on the sharp inflection of the lines at these points in each respective scree plot.  I'm going to present both with eight groups for the sake of direct comparison.  
+
+```{r number of groups}
+wards_eight <- cutree(hclust_ward, k = 8)
+complete_eight <- cutree(hclust_complete, k = 8)
+
+## Bind these groups to our species dataframe
+wards_eight_df <- data.frame(wards_eight)
+complete_eight_df <- data.frame(complete_eight)
+``` 
+
+There indeed appears to be differences between groupings of the two linkage methods. Interestingly, ward's has greater heights than complete linkage. 
+```{r cluster graphs}
+wards_eight_dendrogram <- as.dendrogram(hclust_ward)
+complete_eight_dendrogram <- as.dendrogram(hclust_complete)
+
+par(mfrow = c(2,1))
+
+wards_eight_dendrogram %>%
+  set("branches_k_color", k = 7) %>%
+  set("labels_col", k = 7) %>%
+  plot(main = 'wards')
+
+complete_eight_dendrogram %>%
+  set("branches_k_color", k = 7) %>%
+  set("labels_col", k = 7) %>%
+  plot(main = 'complete')
+```
+
+The clusters appear to be significantly different according to permanova, whether grouped by wards method or complete linkage. 
+```{r permanova wards}
+adonis2(oak_subset_species ~ wards_eight, data = wards_eight_df, method = 'bray') 
+```
+
+```{r permanova complete}
+adonis2(oak_subset_species ~ complete_eight, data = complete_eight_df, method = 'bray')
+```
+
+#3
+
+**3A**
+a) I'm using autotransform = FALSE, because I've made necessary data adjustments above, including standardization by maximum. I want to maintain more control and understanding of my data transformations.
+
+b) I'm choosing a Bray-Curtis distance because this is commonly used with composition data, and it's what I used for cluster analysis. 
+
+c) I'm choosing a maxit of 400, in accordance with recommendations in McCune and Grace (2002)
+
+d) I'm choosing a try of 20, the same as the metaMDS() default, and a trymax of 40, in accordance with McCune and Grace (2002) recommendations. 
+
+```{r nmds function}
+## Function with an argument for axes
+## Run on the dataframe relativized by maximum
+run_nmds <- function(axes){
+  metaMDS(comm = oak_subset_species, 
+            k = axes,
+             autotransform = FALSE,
+             distance = "bray",
+             model = "global", 
+             maxit = 400, 
+             try = 20, trymax = 40)
+}
+
+nmds_three_axes <- run_nmds(axes = 3)
+nmds_two_axes <- run_nmds(axes = 2)
+nmds_one_axis <- run_nmds(axes = 1)
+```
+
+**3B**
+We can see from the dataframe produced below how stress increases as the number of axes decrease, although not as dramatically as I may have expected for one axis.  Three axes has the least stress (0.143), and the stress of the two axis ordination (0.20) is getting close to being potentially misleading, so I'll use a three axis ordination.  
+```{r nmds stress plot}
+## Build a dataframe with the stress values of each nmds
+nmds_stress <- data.frame(
+  'axes' = c(3, 2, 1),
+  'stress' = c(nmds_three_axes$stress, nmds_two_axes$stress, nmds_one_axis$stress)
+)
+
+nmds_stress
+```
+
+**3C**
+```{r final nmds}
+final_nmds <- metaMDS(comm = oak_subset_species, 
+             k = 3,
+             autotransform = FALSE,
+             distance = "bray",
+             model = "global", 
+             ## monoMDS is the default, but putting it here to clarify random starts
+             engine = c('monoMDS'),
+             maxit = 800, 
+             try = 20, trymax = 40)
+```
+
+```{r stress final nmds}
+final_nmds$stress
+```
+
+**3D**
+Both the linear and non-metric fits are above 0.85, which seems quite good to me, although I feel like I always see high r squared values in Shepard plots so I'm not entirely sure of how much weight I should place on high r squared values. 
+
+```{r shepard plot}
+stressplot(final_nmds)
+```
+
+**3E**
+Since there were separate questions for the cluster overlay and the final graph, I decided to try gg_ordicluster() for 3E. I think the gg_ordiplot results colored by cluster analysis group look better, however.  
+
+I think the overlay of the (ward's distance) clusters supports the highly significant p-value of the PERMANOVA analysis; it appears visually that the cluster analysis did very good job of separating groups in agreement with at least two of three axes in the ordination space. 
+```{r ordicluster}
+ordicluster <- gg_ordicluster(final_nmds, hclust_ward, 
+               prune = 8,
+               col = cutree(hclust_ward, 8), 
+               pt.size = 2, 
+               plot = FALSE)
+
+ordicluster$plot +  
+  theme_bw() 
+```
+
+```{r final nmds plot}
+ordiplot <- gg_ordiplot(final_nmds, groups = wards_eight_df$wards_eight, 
+                        hull = TRUE, ellipse = FALSE, spiders = FALSE, 
+                        plot = FALSE, pt.size = 2)
+
+points <- ordiplot$df_ord
+
+ordiplot$plot +
+  ggtitle('NMDS with groups from cluster analysis') +
+  ## Tried to add characters for landform here, but couldn't get legend for pch to show since I have to call a separate geom.
+  ## It showed that landform doesn't appear informative of my hclust() groups. 
+  #geom_point(data = points, aes(x = x, y = y, color = Group), size = 2, pch = oak_subset$Landform, show.legend = TRUE) +
+  ## Hard to tell the most adjacent groups from one another 
+  ## but the group numbers should mean something here so the gradient is nice.
+  scale_color_viridis(discrete = TRUE) +
+  labs(caption = 'Three axis NMDS of oak dataset, restricted to ridge and slope landforms,
+               \n grouped by hierarchical agglomerative clustering with Wards method.
+               \n The group size of eight was chosen with a scree plot.') +
+  theme_bw() +
+  theme(legend.position = 'left') +
+  theme(plot.caption = element_text(hjust = 0, lineheight = 0.6)) +
+  theme(axis.title = element_blank(),
+        axis.ticks = element_blank(), 
+        axis.text = element_blank(),
+        panel.grid = element_blank())
+
+## To truly make this publication quality, I would ggsave() the graph to jpg, 
+## but I'm keeping it in the Markdown document for simplicity. 
+```
+
+**3G** 
+To visualize the variation in stand-level composition of the oak dataset, I used a Non-Metric Multidimensional Scaling (NMDS) ordination.  This was run using the vegan() package in R with the metaMDS() function with the 'monoMDS' engine.  The number of axes was chosen based on observing stress values of NMDS analyses run with one, two, and three axes, three was found to be the minimum number of axes needed to achieve a stress value I deemed acceptable (<0.2).  800 iterations were allowed in each local run, with 20 minimum and 40 maximum global iterations.  The final ordination showed a stress value of 0.143.   For the visualization, I plotted the stand-level coordinates of NMDS1 and NMDS2, and colored the points by groups determined in a hierarchical agglomerative clustering analysis using Ward's method of determining group differences, with group size determined by scree plot. 
